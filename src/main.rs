@@ -1,13 +1,13 @@
 #![allow(unused)]
-extern crate dirs;
-extern crate dotenv;
 
 use std::{error::Error, str};
 use std::env;
 use std::fs::File;
 use std::fs::create_dir;
 use std::path::Path;
+use std::collections::HashMap;
 use std::io::prelude::*;
+use std::io::LineWriter;
 
 use s3::bucket::Bucket;
 use s3::creds::Credentials;
@@ -18,7 +18,29 @@ use dotenv::dotenv;
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
     let mut args = env::args().skip(1);
+    // give better handling
     let action = args.next().unwrap();
+    let config_instace = ConfigInstance::new();
+
+    if action == "config" {
+        let flag = args.next().unwrap();
+
+        match flag.as_str() {
+            "--access-key" => {
+                let access_key = args.next().unwrap();
+                config_instace.insert_access_key(access_key);
+            },
+            "--secret-key" => {
+                let secret_key = args.next().unwrap();
+                config_instace.insert_secret_key(secret_key);
+            }
+            _ => println!("Comando não existente.")
+        }
+
+        return Ok(());
+    }
+
+    // better handling
     let bucket_name = args.next().unwrap();
 
     let bucket_instance = BucketInstance::new(bucket_name);
@@ -50,6 +72,71 @@ async fn main() -> Result<(), std::io::Error> {
 
 struct BucketInstance {
     bucket: s3::bucket::Bucket
+}
+
+struct ConfigInstance {
+    map: HashMap<String, String>
+}
+
+impl ConfigInstance {
+    fn new() -> ConfigInstance {
+        if !ConfigInstance::config_path_exists() {
+            let config_file = File::create(".env").unwrap();
+            let mut writable_file = LineWriter::new(config_file);
+
+            writable_file.write_all("ACCESS_KEY=\n".as_bytes());
+            writable_file.write_all("SECRET_KEY=\n".as_bytes());
+        }
+        
+        let mut map = HashMap::new();
+        let contents = std::fs::read_to_string(".env").unwrap();
+
+        for line in contents.lines() {
+            let mut chunk = line.split('=');
+            let key = match chunk.next() {
+                Some(s) => s,
+                None => ""
+            };
+            let value = match chunk.next() {
+                Some(s) => s,
+                None => ""
+            };
+
+            map.insert(key.to_owned(), value.to_owned());
+        }
+
+        ConfigInstance { map }
+    }
+
+    fn insert_access_key(mut self, access_key: String) {
+        self.map.insert("ACCESS_KEY".to_owned(), access_key);
+    }
+
+    fn insert_secret_key(mut self, secret_key: String) {
+        self.map.insert("SECRET_KEY".to_owned(), secret_key);
+    }
+
+    fn config_path_exists() -> bool {
+        Path::new(".env").exists()
+    }
+}
+
+fn update_config_file(config_instance: &ConfigInstance) {
+    let mut contents = String::new();
+    for (key, value) in &config_instance.map {
+        contents.push_str(&key);
+        contents.push_str("=");
+        contents.push_str(&value);
+        contents.push_str("\n");
+    }
+    
+    std::fs::write(".env", contents).unwrap();
+}
+
+impl Drop for ConfigInstance {
+    fn drop(&mut self) {
+        update_config_file(self);
+    }
 }
 
 impl BucketInstance {
